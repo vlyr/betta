@@ -1,0 +1,19 @@
+[package]
+name = "betta"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "betta-server"
+path = "src/server/main.rs"
+
+[[bin]]
+name = "betta"
+path = "src/client/main.rs"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+betta_core = { path = "src/core", version = "^0" }
+cpal = "0.13.5"
+rodio = "0.15.0"

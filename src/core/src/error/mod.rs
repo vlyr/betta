@@ -1,3 +1,4 @@
+use crate::event::Event;
 use std::fmt;
 use std::io;
 
@@ -5,8 +6,9 @@ pub type Result<T> = std::result::Result<T, self::Error>;
 
 #[derive(Debug)]
 pub enum Error {
-    // Invalid download URL provided for a song
-    InvalidURL,
+    // Error when downloading a song from YouTube
+    // String - youtube-dl command output
+    FileDownloadError(String),
 
     // IO error
     IO(io::Error),
@@ -23,7 +25,9 @@ impl fmt::Display for Error {
         use Error::*;
 
         let output = match self {
-            InvalidURL => "Invalid URL".into(),
+            FileDownloadError(desc) => {
+                format!("Error when downloading file from YouTube - {}", desc)
+            }
             IO(e) => format!("{}", e),
         };
         write!(f, "{}", output)

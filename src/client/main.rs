@@ -22,7 +22,5 @@ fn main() -> Result<()> {
 
     println!("{}", String::from_utf8(buf).unwrap());
     //}
-
-    std::thread::sleep(std::time::Duration::from_millis(10000));
     Ok(())
 }

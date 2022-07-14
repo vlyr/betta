@@ -1,4 +1,6 @@
+use betta_core::command::Command;
 use betta_core::error::Result;
+use std::env;
 use std::io::Read;
 use std::io::Write;
 use std::os::unix::net::UnixStream;
@@ -13,8 +15,13 @@ fn main() -> Result<()> {
         }
     };
 
+    let mut args = env::args();
+    args.next();
+
+    let command = Command::from(args);
+
     //loop {
-    stream.write(b"Hello")?;
+    stream.write(command.to_string().as_bytes())?;
     stream.flush()?;
 
     let mut buf = vec![0; 1024];

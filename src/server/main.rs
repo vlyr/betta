@@ -1,6 +1,10 @@
+use betta_core::command::Command;
 use betta_core::error::Result;
 use betta_core::event::Event;
+use std::time::Duration;
 //use betta_core::utils::download_from_youtube;
+use rodio::queue::{SourcesQueueInput, SourcesQueueOutput};
+use rodio::source::{Amplify, Pausable, Source, Stoppable};
 use rodio::{Decoder, OutputStream, Sink};
 use std::env;
 use std::fs::{self, File};
@@ -12,12 +16,14 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 
 pub struct Server {
-    main_sink: Sink,
+    input_stream: Arc<SourcesQueueInput<f32>>,
 }
 
 impl Server {
-    pub fn new(sink: Sink) -> Self {
-        Self { main_sink: sink }
+    pub fn new(input: Arc<SourcesQueueInput<f32>>) -> Self {
+        Self {
+            input_stream: input,
+        }
     }
 }
 
@@ -39,20 +45,24 @@ fn main() -> Result<()> {
     });*/
 
     let (_stream, stream_handle) = OutputStream::try_default().unwrap();
-    let sink = Sink::try_new(&stream_handle).unwrap();
+    let (input, output) = rodio::queue::queue(true);
 
-    let server = Arc::new(Mutex::new(Server::new(sink)));
+    // TODO: fix .unwrap()
+    stream_handle.play_raw(output).unwrap();
+
+    let server = Arc::new(Mutex::new(Server::new(input)));
+
+    let server_clone = Arc::clone(&server);
 
     thread::spawn(move || {
-        event_handler(main_rx);
+        audio_handler(main_rx, server_clone);
     });
 
     for stream in listener.incoming().filter_map(|s| s.ok()) {
-        let server = Arc::clone(&server);
         let main_tx = Sender::clone(&main_tx);
 
         thread::spawn(move || {
-            handle_stream(stream, server, main_tx).map_err(|e| {
+            handle_stream(stream, main_tx).map_err(|e| {
                 eprintln!("Error occurred in handle_stream - {}", e);
             })
         });
@@ -61,35 +71,87 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn handle_stream(
-    mut stream: UnixStream,
-    server: Arc<Mutex<Server>>,
-    main_tx: Sender<Event>,
-) -> Result<()> {
-    let file = BufReader::new(File::open("/home/vlyr/media/music/bangers/file.wav").unwrap());
-
-    let src = Decoder::new(file).unwrap();
-
-    let server = server.lock().unwrap();
-
-    server.main_sink.append(src);
-    server.main_sink.set_volume(0.5);
-    server.main_sink.play();
+fn handle_stream(mut stream: UnixStream, main_tx: Sender<Event>) -> Result<()> {
+    main_tx
+        .send(Event::Command(Command::SetVolume(50)))
+        .unwrap();
 
     loop {
         let mut buffer = vec![0; 1024];
 
         stream.read(&mut buffer)?;
 
+        buffer.retain(|byte| *byte != u8::MIN);
+
         let message = String::from_utf8(buffer).unwrap();
-        println!("{}", message);
+
+        let cmd = Command::from(message.split(' '));
+
+        main_tx.send(Event::Command(cmd)).unwrap();
 
         stream.write(b"ACK")?;
-        stream.write(b"\r\n")?;
         stream.flush()?;
     }
 }
 
-fn event_handler(main_rx: Receiver<Event>) {
-    while let Ok(ev) = main_rx.recv() {}
+fn audio_handler(event_rx: Receiver<Event>, server: Arc<Mutex<Server>>) {
+    let mut song_control_tx: Option<Sender<Command>> = None;
+    let mut stop_signal: Option<Receiver<()>> = None;
+
+    loop {
+        if let Some(ref rx) = stop_signal {
+            if let Ok(_sig) = rx.try_recv() {}
+        }
+
+        if let Ok(event) = event_rx.recv() {
+            let server = server.lock().unwrap();
+
+            match event {
+                Event::Command(cmd) => match cmd {
+                    Command::Play => {
+                        let file = BufReader::new(
+                            File::open("/home/vlyr/media/music/bangers/file.wav").unwrap(),
+                        );
+
+                        // Store song_control_tx somewhere + create a new channel whenever a new song starts playing
+                        let (tx, rx) = mpsc::channel();
+                        song_control_tx = Some(tx);
+
+                        let src = Decoder::new(file)
+                            .unwrap()
+                            .amplify(0.5)
+                            .pausable(false)
+                            .stoppable()
+                            .periodic_access(Duration::from_millis(200), move |src| {
+                                if let Ok(cmd) = rx.try_recv() {
+                                    println!("{:#?}", src.inner_mut().inner_mut().total_duration());
+
+                                    match cmd {
+                                        Command::Pause => src.inner_mut().set_paused(true),
+                                        Command::Resume => src.inner_mut().set_paused(false),
+                                        Command::SetVolume(vol) => {
+                                            src.inner_mut().inner_mut().total
+                                            src.inner_mut()
+                                                .inner_mut()
+                                                .set_factor(vol as f32 / 100.0);
+                                        }
+                                        _ => (),
+                                    }
+                                }
+                            })
+                            .convert_samples();
+
+                        stop_signal = Some(server.input_stream.append_with_signal(src));
+                    }
+
+                    cmd => {
+                        if let Some(ref tx) = song_control_tx {
+                            tx.send(cmd).unwrap();
+                        };
+                    }
+                },
+                _ => (),
+            }
+        }
+    }
 }

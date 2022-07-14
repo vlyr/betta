@@ -3,6 +3,7 @@ pub struct Song {
     artist: Option<String>,
 }
 
+pub mod command;
 pub mod error;
 pub mod event;
 pub mod utils;

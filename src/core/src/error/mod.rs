@@ -10,6 +10,9 @@ pub enum Error {
     // String - youtube-dl command output
     FileDownloadError(String),
 
+    // Invalid arguments given when trying to construct a Command (see betta_core::command)
+    InvalidCommandArguments,
+
     // IO error
     IO(io::Error),
 }
@@ -28,6 +31,7 @@ impl fmt::Display for Error {
             FileDownloadError(desc) => {
                 format!("Error when downloading file from YouTube - {}", desc)
             }
+            InvalidCommandArguments => format!("Invalid command arguments provided."),
             IO(e) => format!("{}", e),
         };
         write!(f, "{}", output)

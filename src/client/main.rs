@@ -18,7 +18,13 @@ fn main() -> Result<()> {
     let mut args = env::args();
     args.next();
 
-    let command = Command::from(args);
+    let command = match Command::from_args(args) {
+        Ok(cmd) => cmd,
+        Err(e) => {
+            println!("Error when creating command - {}", e);
+            process::exit(1);
+        }
+    };
 
     //loop {
     stream.write(command.to_string().as_bytes())?;

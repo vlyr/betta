@@ -1,11 +1,10 @@
 use betta_core::command::Command;
 use betta_core::error::Result;
 use betta_core::event::Event;
-use std::time::Duration;
-//use betta_core::utils::download_from_youtube;
-use rodio::queue::{SourcesQueueInput, SourcesQueueOutput};
-use rodio::source::{Amplify, Pausable, Source, Stoppable};
-use rodio::{Decoder, OutputStream, Sink};
+use betta_core::utils::download_from_youtube;
+use rodio::queue::SourcesQueueInput;
+use rodio::source::Source;
+use rodio::{Decoder, OutputStream};
 use std::env;
 use std::fs::{self, File};
 use std::io::{BufReader, Read, Write};
@@ -14,6 +13,7 @@ use std::path::Path;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time::Duration;
 
 pub struct Server {
     input_stream: Arc<SourcesQueueInput<f32>>,
@@ -31,18 +31,15 @@ fn main() -> Result<()> {
     let path = Path::new("/tmp/betta_channel");
 
     if path.exists() {
-        fs::remove_file(path)?;
+        fs::remove_file(path)?
     }
 
     let listener = UnixListener::bind("/tmp/betta_channel")?;
 
     let (main_tx, main_rx) = mpsc::channel::<Event>();
+    let main_tx_clone = main_tx.clone();
 
     env::set_current_dir("/home/vlyr/media/music/betta")?;
-
-    /*thread::spawn(move || {
-        download_from_youtube("https://www.youtube.com/watch?v=tV6Oe7FkQJc")
-    });*/
 
     let (_stream, stream_handle) = OutputStream::try_default().unwrap();
     let (input, output) = rodio::queue::queue(true);
@@ -51,11 +48,10 @@ fn main() -> Result<()> {
     stream_handle.play_raw(output).unwrap();
 
     let server = Arc::new(Mutex::new(Server::new(input)));
-
     let server_clone = Arc::clone(&server);
 
     thread::spawn(move || {
-        audio_handler(main_rx, server_clone);
+        event_handler(main_rx, main_tx_clone, server_clone);
     });
 
     for stream in listener.incoming().filter_map(|s| s.ok()) {
@@ -78,15 +74,11 @@ fn handle_stream(mut stream: UnixStream, main_tx: Sender<Event>) -> Result<()> {
 
     loop {
         let mut buffer = vec![0; 1024];
-
         stream.read(&mut buffer)?;
-
         buffer.retain(|byte| *byte != u8::MIN);
 
         let message = String::from_utf8(buffer).unwrap();
-
-        let cmd = Command::from(message.split(' '));
-
+        let cmd = Command::from_args(message.split(' '))?;
         main_tx.send(Event::Command(cmd)).unwrap();
 
         stream.write(b"ACK")?;
@@ -94,7 +86,7 @@ fn handle_stream(mut stream: UnixStream, main_tx: Sender<Event>) -> Result<()> {
     }
 }
 
-fn audio_handler(event_rx: Receiver<Event>, server: Arc<Mutex<Server>>) {
+fn event_handler(main_rx: Receiver<Event>, main_tx: Sender<Event>, server: Arc<Mutex<Server>>) {
     let mut song_control_tx: Option<Sender<Command>> = None;
     let mut stop_signal: Option<Receiver<()>> = None;
 
@@ -103,17 +95,14 @@ fn audio_handler(event_rx: Receiver<Event>, server: Arc<Mutex<Server>>) {
             if let Ok(_sig) = rx.try_recv() {}
         }
 
-        if let Ok(event) = event_rx.recv() {
+        if let Ok(event) = main_rx.recv() {
             let server = server.lock().unwrap();
 
             match event {
                 Event::Command(cmd) => match cmd {
-                    Command::Play => {
-                        let file = BufReader::new(
-                            File::open("/home/vlyr/media/music/bangers/file.wav").unwrap(),
-                        );
+                    Command::Play(path) => {
+                        let file = BufReader::new(File::open(path).unwrap());
 
-                        // Store song_control_tx somewhere + create a new channel whenever a new song starts playing
                         let (tx, rx) = mpsc::channel();
                         song_control_tx = Some(tx);
 
@@ -130,7 +119,6 @@ fn audio_handler(event_rx: Receiver<Event>, server: Arc<Mutex<Server>>) {
                                         Command::Pause => src.inner_mut().set_paused(true),
                                         Command::Resume => src.inner_mut().set_paused(false),
                                         Command::SetVolume(vol) => {
-                                            src.inner_mut().inner_mut().total
                                             src.inner_mut()
                                                 .inner_mut()
                                                 .set_factor(vol as f32 / 100.0);
@@ -142,6 +130,15 @@ fn audio_handler(event_rx: Receiver<Event>, server: Arc<Mutex<Server>>) {
                             .convert_samples();
 
                         stop_signal = Some(server.input_stream.append_with_signal(src));
+                    }
+
+                    Command::Download(url) => {
+                        let sender = main_tx.clone();
+
+                        thread::spawn(move || match download_from_youtube(url) {
+                            Ok(file_path) => sender.send(Event::FileDownloaded(file_path)),
+                            Err(e) => sender.send(Event::Err(e)),
+                        });
                     }
 
                     cmd => {

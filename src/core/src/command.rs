@@ -1,6 +1,9 @@
+use crate::error::{Error, Result};
+
 #[derive(Debug, Clone)]
 pub enum Command {
-    Play,
+    Play(String),
+    Download(String),
     Pause,
     Resume,
     VolumeUp(u32),
@@ -16,7 +19,8 @@ impl ToString for Command {
 
         match self {
             Pause => "pause".into(),
-            Play => "play".into(),
+            Play(path) => format!("play {}", path),
+            Download(url) => format!("download {}", url),
             Resume => "resume".into(),
             GetVolume => "vol".into(),
             SetVolume(num) => format!("vol {}", num),
@@ -25,29 +29,40 @@ impl ToString for Command {
     }
 }
 
-impl<S, I> From<I> for Command
-where
-    S: AsRef<str>,
-    I: Iterator<Item = S>,
-{
-    fn from(mut data: I) -> Self {
+impl Command {
+    pub fn from_args<S, I>(mut data: I) -> Result<Self>
+    where
+        S: AsRef<str>,
+        I: Iterator<Item = S>,
+    {
         use Command::*;
+
         match data.next() {
             Some(arg) => match arg.as_ref() {
-                "play" => Play,
-                "pause" => Pause,
-                "resume" => Resume,
+                "play" => match data.next() {
+                    Some(p) => Ok(Play(p.as_ref().to_string())),
+                    None => Err(Error::InvalidCommandArguments),
+                },
+
+                "download" => match data.next() {
+                    Some(url) => Ok(Download(url.as_ref().to_string())),
+                    None => Err(Error::InvalidCommandArguments),
+                },
+
+                "pause" => Ok(Pause),
+                "resume" => Ok(Resume),
+
                 "vol" => match data.next() {
                     Some(vol) => match vol.as_ref().parse::<u32>() {
-                        Ok(num) => SetVolume(num),
-                        Err(_) => GetVolume,
+                        Ok(num) => Ok(SetVolume(num)),
+                        Err(_) => Err(Error::InvalidCommandArguments),
                     },
 
-                    None => GetVolume,
+                    None => Ok(GetVolume),
                 },
-                _ => Overview,
+                _ => Ok(Overview),
             },
-            _ => Overview,
+            _ => Ok(Overview),
         }
     }
 }

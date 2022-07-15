@@ -2,7 +2,6 @@ use betta_core::command::Command;
 use betta_core::error::Result;
 use betta_core::event::Event;
 use betta_core::utils::download_from_youtube;
-use rodio::queue::SourcesQueueInput;
 use rodio::source::Source;
 use rodio::{Decoder, OutputStream};
 use std::env;
@@ -15,17 +14,8 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
-pub struct Server {
-    input_stream: Arc<SourcesQueueInput<f32>>,
-}
-
-impl Server {
-    pub fn new(input: Arc<SourcesQueueInput<f32>>) -> Self {
-        Self {
-            input_stream: input,
-        }
-    }
-}
+mod server;
+use server::Server;
 
 fn main() -> Result<()> {
     let path = Path::new("/tmp/betta_channel");
@@ -51,14 +41,18 @@ fn main() -> Result<()> {
     let server_clone = Arc::clone(&server);
 
     thread::spawn(move || {
-        event_handler(main_rx, main_tx_clone, server_clone);
+        event_handler(main_rx, main_tx_clone, server_clone)
+            .map_err(|e| panic!("{}", e))
+            .unwrap();
     });
 
     for stream in listener.incoming().filter_map(|s| s.ok()) {
         let main_tx = Sender::clone(&main_tx);
 
+        let server_clone = server.clone();
+
         thread::spawn(move || {
-            handle_stream(stream, main_tx).map_err(|e| {
+            handle_stream(stream, main_tx, server_clone).map_err(|e| {
                 eprintln!("Error occurred in handle_stream - {}", e);
             })
         });
@@ -67,41 +61,95 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn handle_stream(mut stream: UnixStream, main_tx: Sender<Event>) -> Result<()> {
-    main_tx
-        .send(Event::Command(Command::SetVolume(50)))
-        .unwrap();
-
+fn handle_stream(
+    mut stream: UnixStream,
+    main_tx: Sender<Event>,
+    server: Arc<Mutex<Server>>,
+) -> Result<()> {
     loop {
         let mut buffer = vec![0; 1024];
         stream.read(&mut buffer)?;
         buffer.retain(|byte| *byte != u8::MIN);
 
         let message = String::from_utf8(buffer).unwrap();
-        let cmd = Command::from_args(message.split(' '))?;
-        main_tx.send(Event::Command(cmd)).unwrap();
 
-        stream.write(b"ACK")?;
+        if message.is_empty() {
+            continue;
+        }
+
+        let cmd = Command::from_args(message.split(' '))?;
+
+        match cmd {
+            Command::Overview => {
+                let server_lock = server.lock().unwrap();
+
+                let queue = server_lock.queue();
+
+                match queue.is_empty() {
+                    true => stream.write(b"Queue is empty"),
+
+                    false => stream.write(
+                        queue
+                            .iter()
+                            .map(|p| p.to_str().unwrap().to_string())
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                            .as_bytes(),
+                    ),
+                }
+                .unwrap();
+            }
+
+            cmd => {
+                main_tx.send(Event::Command(cmd)).unwrap();
+            }
+        }
+
+        stream.write(&[0x06])?;
+
         stream.flush()?;
     }
 }
 
-fn event_handler(main_rx: Receiver<Event>, main_tx: Sender<Event>, server: Arc<Mutex<Server>>) {
+fn event_handler(
+    main_rx: Receiver<Event>,
+    main_tx: Sender<Event>,
+    server: Arc<Mutex<Server>>,
+) -> Result<()> {
     let mut song_control_tx: Option<Sender<Command>> = None;
-    let mut stop_signal: Option<Receiver<()>> = None;
 
     loop {
-        if let Some(ref rx) = stop_signal {
-            if let Ok(_sig) = rx.try_recv() {}
-        }
-
         if let Ok(event) = main_rx.recv() {
-            let server = server.lock().unwrap();
+            let mut server = server.lock().unwrap();
 
             match event {
+                Event::SongFinished => {
+                    if let Some(next_song) = server.queue_mut().pop_front() {
+                        main_tx
+                            .send(Event::Command(Command::Play(
+                                next_song.to_str().unwrap().to_string(),
+                            )))
+                            .unwrap();
+                    }
+                }
+
                 Event::Command(cmd) => match cmd {
-                    Command::Play(path) => {
-                        let file = BufReader::new(File::open(path).unwrap());
+                    Command::Play(ref path) => {
+                        if let Some(ref tx) = song_control_tx {
+                            if let Err(e) = tx.send(Command::Stop) {
+                                eprintln!("{}", e);
+                            }
+                        }
+                        let file = match Path::new(&path).is_dir() {
+                            true => {
+                                server.queue_directory(path)?;
+                                let first_song = server.queue_mut().pop_front().unwrap();
+
+                                BufReader::new(File::open(first_song)?)
+                            }
+
+                            false => BufReader::new(File::open(path)?),
+                        };
 
                         let (tx, rx) = mpsc::channel();
                         song_control_tx = Some(tx);
@@ -113,11 +161,10 @@ fn event_handler(main_rx: Receiver<Event>, main_tx: Sender<Event>, server: Arc<M
                             .stoppable()
                             .periodic_access(Duration::from_millis(200), move |src| {
                                 if let Ok(cmd) = rx.try_recv() {
-                                    println!("{:#?}", src.inner_mut().inner_mut().total_duration());
-
                                     match cmd {
                                         Command::Pause => src.inner_mut().set_paused(true),
                                         Command::Resume => src.inner_mut().set_paused(false),
+                                        Command::Stop => src.stop(),
                                         Command::SetVolume(vol) => {
                                             src.inner_mut()
                                                 .inner_mut()
@@ -129,7 +176,13 @@ fn event_handler(main_rx: Receiver<Event>, main_tx: Sender<Event>, server: Arc<M
                             })
                             .convert_samples();
 
-                        stop_signal = Some(server.input_stream.append_with_signal(src));
+                        let stop_signal_rx = server.audio_input().append_with_signal(src);
+                        let stop_signal_tx = main_tx.clone();
+
+                        thread::spawn(move || {
+                            stop_signal_rx.recv().ok();
+                            stop_signal_tx.send(Event::SongFinished).unwrap();
+                        });
                     }
 
                     Command::Download(url) => {

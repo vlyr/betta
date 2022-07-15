@@ -3,6 +3,9 @@ pub struct Song {
     artist: Option<String>,
 }
 
+#[cfg(test)]
+mod tests {}
+
 pub mod command;
 pub mod error;
 pub mod event;

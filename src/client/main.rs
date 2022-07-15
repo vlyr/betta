@@ -1,13 +1,13 @@
 use betta_core::command::Command;
 use betta_core::error::Result;
 use std::env;
-use std::io::Read;
-use std::io::Write;
+use std::io::{BufRead, BufReader, BufWriter, Read, Write};
+use std::net::Shutdown;
 use std::os::unix::net::UnixStream;
 use std::process;
 
 fn main() -> Result<()> {
-    let mut stream = match UnixStream::connect("/tmp/betta_channel") {
+    let stream = match UnixStream::connect("/tmp/betta_channel") {
         Ok(s) => s,
         Err(e) => {
             eprintln!("Failed to connect - {}", e);
@@ -18,7 +18,7 @@ fn main() -> Result<()> {
     let mut args = env::args();
     args.next();
 
-    let command = match Command::from_args(args) {
+    let command = match Command::from_args(args.collect::<Vec<_>>().iter()) {
         Ok(cmd) => cmd,
         Err(e) => {
             println!("Error when creating command - {}", e);
@@ -26,14 +26,19 @@ fn main() -> Result<()> {
         }
     };
 
-    //loop {
-    stream.write(command.to_string().as_bytes())?;
-    stream.flush()?;
+    let mut reader = BufReader::new(&stream);
+    let mut writer = BufWriter::new(&stream);
+    print!("{}", command.to_string());
 
-    let mut buf = vec![0; 1024];
-    stream.read(&mut buf)?;
+    writer.write(format!("{}\n", command.to_string()).as_bytes())?;
+    writer.flush()?;
 
-    println!("{}", String::from_utf8(buf).unwrap());
-    //}
+    let mut buffer = vec![];
+    reader.read_until(0x06, &mut buffer).unwrap();
+
+    println!("{}", String::from_utf8(buffer).unwrap());
+
+    reader.into_inner().shutdown(Shutdown::Both).unwrap();
+
     Ok(())
 }

@@ -42,6 +42,9 @@ dependencies = [
 [[package]]
 name = "betta_core"
 version = "0.1.0"
+dependencies = [
+ "rodio",
+]
 
 [[package]]
 name = "bindgen"

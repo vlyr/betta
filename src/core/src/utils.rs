@@ -1,8 +1,16 @@
+use crate::command::Command;
 use crate::error::{Error, Result};
 use crate::event::Event;
+
+use rodio::source::*;
+use rodio::Decoder;
+
 use std::fs;
+use std::fs::File;
+use std::io::{self, BufReader};
+use std::path::Path;
 use std::path::PathBuf;
-use std::process::Command;
+use std::process::Command as StdCommand;
 
 pub fn download_from_youtube<U>(url: U) -> Result<PathBuf>
 where
@@ -18,7 +26,7 @@ where
         .map(|file| file.path())
         .collect();
 
-    if let Err(e) = Command::new("youtube-dl")
+    if let Err(e) = StdCommand::new("youtube-dl")
         .args(["-f", "bestaudio", "-x", url.as_ref()])
         .output()
     {

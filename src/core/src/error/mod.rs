@@ -1,6 +1,6 @@
-use crate::event::Event;
 use std::fmt;
 use std::io;
+use std::sync::mpsc;
 
 pub type Result<T> = std::result::Result<T, self::Error>;
 

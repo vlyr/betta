@@ -1,12 +1,13 @@
 use betta_core::error::Result;
+use betta_core::Song;
 use rodio::queue::SourcesQueueInput;
 use std::collections::VecDeque;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 
 pub struct Server {
-    queue: VecDeque<PathBuf>,
+    queue: VecDeque<Song>,
     audio_input: Arc<SourcesQueueInput<f32>>,
 }
 
@@ -18,11 +19,11 @@ impl Server {
         }
     }
 
-    pub fn queue_mut(&mut self) -> &mut VecDeque<PathBuf> {
+    pub fn queue_mut(&mut self) -> &mut VecDeque<Song> {
         &mut self.queue
     }
 
-    pub fn queue(&self) -> &VecDeque<PathBuf> {
+    pub fn queue(&self) -> &VecDeque<Song> {
         &self.queue
     }
 
@@ -37,6 +38,7 @@ impl Server {
         Ok(fs::read_dir(dir.as_ref())?
             .filter_map(|res| res.ok())
             .map(|f| f.path())
-            .for_each(|path| self.queue.push_back(path)))
+            .map(|path| Song::new(path))
+            .for_each(|song| self.queue.push_back(song)))
     }
 }

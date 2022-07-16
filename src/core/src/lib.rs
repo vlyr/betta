@@ -1,6 +1,27 @@
+use std::path::PathBuf;
+
 pub struct Song {
-    name: String,
-    artist: Option<String>,
+    inner: PathBuf,
+}
+
+impl Song {
+    pub fn new(inner: PathBuf) -> Self {
+        Self { inner }
+    }
+
+    pub fn name(&self) -> String {
+        self.inner
+            .with_extension("")
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string()
+    }
+
+    pub fn path(&self) -> String {
+        self.inner.display().to_string()
+    }
 }
 
 #[cfg(test)]

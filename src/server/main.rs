@@ -91,7 +91,7 @@ fn handle_stream(
                     false => stream.write(
                         queue
                             .iter()
-                            .map(|p| p.to_str().unwrap().to_string())
+                            .map(|p| p.name())
                             .collect::<Vec<_>>()
                             .join("\n")
                             .as_bytes(),
@@ -126,9 +126,7 @@ fn event_handler(
                 Event::SongFinished => {
                     if let Some(next_song) = server.queue_mut().pop_front() {
                         main_tx
-                            .send(Event::Command(Command::Play(
-                                next_song.to_str().unwrap().to_string(),
-                            )))
+                            .send(Event::Command(Command::Play(next_song.path())))
                             .unwrap();
                     }
                 }
@@ -145,7 +143,7 @@ fn event_handler(
                                 server.queue_directory(path)?;
                                 let first_song = server.queue_mut().pop_front().unwrap();
 
-                                BufReader::new(File::open(first_song)?)
+                                BufReader::new(File::open(first_song.path())?)
                             }
 
                             false => BufReader::new(File::open(path)?),

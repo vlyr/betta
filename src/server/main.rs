@@ -34,7 +34,7 @@ fn main() -> Result<()> {
 
     env::set_current_dir("/home/vlyr/media/music/betta")?;
 
-    let (_stream, stream_handle) = OutputStream::try_default().unwrap();
+    let (_stream, stream_handle) = OutputStream::try_default()?;
     let (input, output) = rodio::queue::queue(true);
 
     // TODO: fix .unwrap()

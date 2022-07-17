@@ -25,6 +25,12 @@ impl From<io::Error> for Error {
     }
 }
 
+impl From<StreamError> for Error {
+    fn from(data: StreamError) -> Self {
+        Self::Stream(data)
+    }
+}
+
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         use Error::*;

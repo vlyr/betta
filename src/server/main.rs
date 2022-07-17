@@ -17,6 +17,9 @@ use std::time::Duration;
 mod server;
 use server::Server;
 
+mod database;
+use database::Database;
+
 fn main() -> Result<()> {
     let path = Path::new("/tmp/betta_channel");
 

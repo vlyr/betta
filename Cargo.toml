@@ -17,3 +17,8 @@ path = "src/client/main.rs"
 betta_core = { path = "src/core", version = "^0" }
 cpal = "0.13.5"
 rodio = "0.15.0"
+serde_json = "1.0.82"
+
+[dependencies.serde]
+version = "1.0.139"
+features = ["derive"]
